@@ -1,0 +1,193 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Kullanıcı modeli (admin girişi için)
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  password      String
+  role          String    @default("USER") // ADMIN, USER
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// Sezon modeli
+model Season {
+  id            String    @id @default(cuid())
+  name          String    // Örn: "2024-2025 Sezonu"
+  startDate     DateTime
+  endDate       DateTime
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // İlişkiler
+  leagues       League[]
+  playerTeams   PlayerTeam[]
+}
+
+// Cinsiyet kategorisi
+model Gender {
+  id            String    @id @default(cuid())
+  name          String    // Erkekler, Kadınlar
+  
+  // İlişkiler
+  leagues       League[]
+}
+
+// Lig tipi modeli
+model LeagueType {
+  id            String    @id @default(cuid())
+  name          String    // Süper Lig, 1. Lig, 2. Lig, 3. Lig
+  level         Int       // Sıralama için: 1, 2, 3, 4
+  
+  // İlişkiler
+  leagues       League[]
+}
+
+// Lig modeli
+model League {
+  id            String    @id @default(cuid())
+  name          String    // Otomatik oluşturulabilir: "2024-2025 Erkekler Süper Lig"
+  seasonId      String
+  genderId      String
+  leagueTypeId  String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // İlişkiler
+  season        Season    @relation(fields: [seasonId], references: [id])
+  gender        Gender    @relation(fields: [genderId], references: [id])
+  leagueType    LeagueType @relation(fields: [leagueTypeId], references: [id])
+  stages        Stage[]
+  teams         Team[]    // Lige katılan takımlar
+}
+
+// Etap modeli
+model Stage {
+  id            String    @id @default(cuid())
+  name          String    // 1. Etap, 2. Etap
+  order         Int       // Sıralama için
+  startDate     DateTime
+  endDate       DateTime
+  leagueId      String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // İlişkiler
+  league        League    @relation(fields: [leagueId], references: [id])
+  matches       Match[]
+}
+
+// Kulüp modeli
+model Club {
+  id            String    @id @default(cuid())
+  name          String
+  logo          String?
+  address       String?
+  phone         String?
+  email         String?
+  website       String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // İlişkiler
+  teams         Team[]
+}
+
+// Takım modeli
+model Team {
+  id            String    @id @default(cuid())
+  name          String
+  clubId        String
+  leagueId      String?   // Takımın katıldığı lig (opsiyonel, her sezon değişebilir)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // İlişkiler
+  club          Club      @relation(fields: [clubId], references: [id])
+  league        League?   @relation(fields: [leagueId], references: [id])
+  homeMatches   Match[]   @relation("HomeTeam")
+  awayMatches   Match[]   @relation("AwayTeam")
+  playerTeams   PlayerTeam[]
+}
+
+// Oyuncu modeli
+model Player {
+  id            String    @id @default(cuid())
+  firstName     String
+  lastName      String
+  birthDate     DateTime?
+  gender        String    // Erkek, Kadın
+  licenseNumber String?   // Lisans numarası
+  photo         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // İlişkiler
+  playerTeams   PlayerTeam[]
+  matchScores   MatchScore[]
+}
+
+// Oyuncu-Takım ilişkisi (her sezon için)
+model PlayerTeam {
+  id            String    @id @default(cuid())
+  playerId      String
+  teamId        String
+  seasonId      String
+  joinDate      DateTime  @default(now())
+  leaveDate     DateTime?
+  
+  // İlişkiler
+  player        Player    @relation(fields: [playerId], references: [id])
+  team          Team      @relation(fields: [teamId], references: [id])
+  season        Season    @relation(fields: [seasonId], references: [id])
+  
+  @@unique([playerId, teamId, seasonId])
+}
+
+// Maç modeli
+model Match {
+  id            String    @id @default(cuid())
+  stageId       String
+  homeTeamId    String
+  awayTeamId    String
+  matchDate     DateTime
+  location      String?
+  status        String    @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // İlişkiler
+  stage         Stage     @relation(fields: [stageId], references: [id])
+  homeTeam      Team      @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam      Team      @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  matchScores   MatchScore[]
+}
+
+// Maç skoru modeli (oyuncu bazlı)
+model MatchScore {
+  id            String    @id @default(cuid())
+  matchId       String
+  playerId      String
+  isHomeTeam    Boolean   // Ev sahibi takımda mı?
+  sets          String    // JSON formatında set skorları: [11-5, 5-11, 11-7, 11-9]
+  result        String    // W (Kazandı), L (Kaybetti)
+  
+  // İlişkiler
+  match         Match     @relation(fields: [matchId], references: [id])
+  player        Player    @relation(fields: [playerId], references: [id])
+  
+  @@unique([matchId, playerId])
+}
+
