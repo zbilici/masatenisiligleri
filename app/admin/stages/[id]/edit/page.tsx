@@ -1,146 +1,209 @@
 "use client"
 
-import React from "react"
+import type React from "react"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { ChevronLeft } from "lucide-react"
 
 interface League {
-  id: string
+  id: number
   name: string
+  season: {
+    name: string
+  }
+}
+
+interface SubLeague {
+  id: number
+  name: string
+  league: {
+    id: number
+    name: string
+  }
 }
 
 interface Stage {
-  id: string
+  id: number
   name: string
   order: number
+  leagueId: number | null
+  subLeagueId: number | null
   startDate: string
   endDate: string
-  leagueId: string
 }
 
-export default function EditStagePage({ params }: { params: { id: string } }) {
+export default function EditStagePage() {
+  const params = useParams()
   const router = useRouter()
   const { toast } = useToast()
-  const [isLoading, setIsLoading] = useState(true)
+  const [stage, setStage] = useState<Stage | null>(null)
   const [leagues, setLeagues] = useState<League[]>([])
-  const [formData, setFormData] = useState<Stage>({
-    id: "",
-    name: "",
-    order: 1,
-    startDate: "",
-    endDate: "",
-    leagueId: "",
-  })
-
-  // React.use() ile params.id'yi çözelim
-  const id = React.use(params).id
+  const [subLeagues, setSubLeagues] = useState<SubLeague[]>([])
+  const [filteredSubLeagues, setFilteredSubLeagues] = useState<SubLeague[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
-    // Etap verilerini getir
-    const fetchStage = async () => {
+    const fetchData = async () => {
       try {
-        const response = await fetch(`/api/stages/${id}`)
+        // Etap bilgilerini getir
+        const stageResponse = await fetch(`/api/stages/${params.id}`)
+        if (!stageResponse.ok) {
+          const errorData = await stageResponse.json()
+          throw new Error(errorData.error || "Etap bilgileri alınamadı")
+        }
+        const stageData = await stageResponse.json()
 
-        if (!response.ok) {
-          throw new Error("Etap bilgileri alınamadı")
+        // Tarih formatını düzelt
+        const formattedStage = {
+          ...stageData,
+          startDate: new Date(stageData.startDate).toISOString().split("T")[0],
+          endDate: new Date(stageData.endDate).toISOString().split("T")[0],
         }
 
-        const stage = await response.json()
+        setStage(formattedStage)
 
-        // Tarihleri input için uygun formata çevir (YYYY-MM-DD)
-        const startDate = new Date(stage.startDate).toISOString().split("T")[0]
+        // Ligleri getir
+        const leaguesResponse = await fetch("/api/leagues")
+        if (!leaguesResponse.ok) {
+          throw new Error("Ligler yüklenirken bir hata oluştu")
+        }
+        const leaguesData = await leaguesResponse.json()
+        setLeagues(leaguesData)
 
-        const endDate = new Date(stage.endDate).toISOString().split("T")[0]
+        // Alt ligleri getir
+        const subLeaguesResponse = await fetch("/api/sub-leagues")
+        if (!subLeaguesResponse.ok) {
+          throw new Error("Alt ligler yüklenirken bir hata oluştu")
+        }
+        const subLeaguesData = await subLeaguesResponse.json()
+        setSubLeagues(subLeaguesData)
 
-        setFormData({
-          id: stage.id,
-          name: stage.name,
-          order: stage.order,
-          startDate,
-          endDate,
-          leagueId: stage.leagueId,
-        })
+        // Eğer etap bir lige bağlıysa, o lige ait alt ligleri filtrele
+        if (stageData.leagueId) {
+          const filtered = subLeaguesData.filter((sl: SubLeague) => sl.league.id === stageData.leagueId)
+          setFilteredSubLeagues(filtered)
+        }
       } catch (error) {
-        console.error("Etap getirme hatası:", error)
+        console.error("Veri getirme hatası:", error)
         toast({
           title: "Hata",
-          description: "Etap bilgileri yüklenirken bir hata oluştu.",
+          description: error instanceof Error ? error.message : "Veriler yüklenirken bir hata oluştu.",
           variant: "destructive",
         })
+      } finally {
+        setIsLoading(false)
       }
     }
 
-    // Ligleri getir
-    const fetchLeagues = async () => {
-      try {
-        const response = await fetch("/api/leagues")
-        const data = await response.json()
-        setLeagues(data)
-      } catch (err) {
-        console.error("Ligleri getirme hatası:", err)
+    fetchData()
+  }, [params.id, toast])
+
+  // Lig seçildiğinde alt ligleri filtrele
+  useEffect(() => {
+    if (stage?.leagueId) {
+      const filtered = subLeagues.filter((sl) => sl.league.id === stage.leagueId)
+      setFilteredSubLeagues(filtered)
+
+      // Eğer seçili alt lig, filtrelenmiş alt liglerde yoksa, seçimi temizle
+      if (stage.subLeagueId && !filtered.some((sl) => sl.id === stage.subLeagueId)) {
+        setStage((prev) => (prev ? { ...prev, subLeagueId: null } : null))
       }
+    } else {
+      setFilteredSubLeagues([])
     }
+  }, [stage?.leagueId, subLeagues])
 
-    Promise.all([fetchStage(), fetchLeagues()])
-      .then(() => setIsLoading(false))
-      .catch(() => setIsLoading(false))
-  }, [id, toast])
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type } = e.target
-    setFormData((prev) => ({
-      ...prev,
-      [name]: type === "number" ? Number.parseInt(value) : value,
-    }))
-  }
-
-  const handleSelectChange = (name: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [name]: value }))
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    setIsLoading(true)
+    if (!stage) return
+
+    if (!stage.name || !stage.startDate || !stage.endDate || (!stage.leagueId && !stage.subLeagueId)) {
+      toast({
+        title: "Hata",
+        description: "Lütfen tüm zorunlu alanları doldurun. Lig veya alt lig seçmelisiniz.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsSaving(true)
 
     try {
-      const response = await fetch(`/api/stages/${id}`, {
+      const response = await fetch(`/api/stages/${params.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          name: stage.name,
+          order: stage.order || 1,
+          leagueId: stage.leagueId,
+          subLeagueId: stage.subLeagueId,
+          startDate: new Date(stage.startDate).toISOString(),
+          endDate: new Date(stage.endDate).toISOString(),
+        }),
       })
 
-      const data = await response.json()
-
       if (!response.ok) {
-        throw new Error(data.error || "Etap güncellenirken bir hata oluştu.")
+        const data = await response.json()
+        throw new Error(data.error || "Etap güncellenirken bir hata oluştu")
       }
 
       toast({
-        title: "Etap güncellendi",
-        description: "Etap bilgileri başarıyla güncellendi.",
+        title: "Başarılı",
+        description: "Etap başarıyla güncellendi.",
       })
 
       router.push("/admin/stages")
     } catch (error) {
       console.error("Etap güncelleme hatası:", error)
       toast({
-        title: "Etap güncellenemedi",
-        description: error instanceof Error ? error.message : "Bir hata oluştu",
+        title: "Hata",
+        description: error instanceof Error ? error.message : "Etap güncellenirken bir hata oluştu.",
         variant: "destructive",
       })
     } finally {
-      setIsLoading(false)
+      setIsSaving(false)
+    }
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target
+    setStage((prev) => (prev ? { ...prev, [name]: value } : null))
+  }
+
+  const handleSelectChange = (name: string, value: string) => {
+    if (name === "leagueId") {
+      setStage((prev) =>
+        prev
+          ? {
+              ...prev,
+              [name]: value ? Number.parseInt(value) : null,
+              subLeagueId: null, // Lig değiştiğinde alt lig seçimini temizle
+            }
+          : null,
+      )
+    } else if (name === "subLeagueId") {
+      setStage((prev) =>
+        prev
+          ? {
+              ...prev,
+              [name]: value ? Number.parseInt(value) : null,
+              leagueId: null, // Alt lig seçildiğinde lig seçimini temizle
+            }
+          : null,
+      )
+    } else {
+      setStage((prev) => (prev ? { ...prev, [name]: value ? Number.parseInt(value) : null } : null))
     }
   }
 
@@ -152,60 +215,34 @@ export default function EditStagePage({ params }: { params: { id: string } }) {
     )
   }
 
+  if (!stage) {
+    return (
+      <div className="flex items-center justify-center h-48">
+        <p>Etap bulunamadı.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center">
-        <Button variant="ghost" size="sm" onClick={() => router.back()} className="mr-2">
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
+      <div className="flex items-center gap-2">
+        <Link href="/admin/stages">
+          <Button variant="outline" size="icon">
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+        </Link>
         <h1 className="text-3xl font-bold tracking-tight">Etap Düzenle</h1>
       </div>
 
       <Card>
-        <form onSubmit={handleSubmit}>
-          <CardHeader>
-            <CardTitle>Etap Bilgileri</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="leagueId">Lig</Label>
-              <Select
-                value={formData.leagueId}
-                onValueChange={(value) => handleSelectChange("leagueId", value)}
-                disabled={isLoading || leagues.length === 0}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Lig seçin" />
-                </SelectTrigger>
-                <SelectContent>
-                  {leagues.map((league) => (
-                    <SelectItem key={league.id} value={league.id}>
-                      {league.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {leagues.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  Önce bir lig eklemelisiniz.{" "}
-                  <Link href="/admin/leagues/new" className="text-primary hover:underline">
-                    Lig Ekle
-                  </Link>
-                </p>
-              )}
-            </div>
-
+        <CardHeader>
+          <CardTitle>Etap Bilgileri</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="name">Etap Adı</Label>
-              <Input
-                id="name"
-                name="name"
-                placeholder="Örn: 1. Etap"
-                required
-                value={formData.name}
-                onChange={handleInputChange}
-                disabled={isLoading}
-              />
+              <Input id="name" name="name" value={stage.name} onChange={handleChange} required />
             </div>
 
             <div className="space-y-2">
@@ -214,51 +251,87 @@ export default function EditStagePage({ params }: { params: { id: string } }) {
                 id="order"
                 name="order"
                 type="number"
+                value={stage.order}
+                onChange={handleChange}
                 min="1"
-                required
-                value={formData.order}
-                onChange={handleInputChange}
-                disabled={isLoading}
+                placeholder="1"
               />
+              <p className="text-sm text-muted-foreground">Boş bırakırsanız 1 olarak ayarlanacaktır.</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="leagueId">Lig</Label>
+              <Select
+                value={stage.leagueId?.toString() || ""}
+                onValueChange={(value) => handleSelectChange("leagueId", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Lig seçin" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="-1">Seçilmedi</SelectItem>
+                  {leagues.map((league) => (
+                    <SelectItem key={league.id} value={league.id.toString()}>
+                      {league.season?.name} - {league.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                Lig veya alt lig seçmelisiniz. İkisini birden seçemezsiniz.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="subLeagueId">Alt Lig</Label>
+              <Select
+                value={stage.subLeagueId?.toString() || ""}
+                onValueChange={(value) => handleSelectChange("subLeagueId", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Alt lig seçin" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="-1">Seçilmedi</SelectItem>
+                  {filteredSubLeagues.map((subLeague) => (
+                    <SelectItem key={subLeague.id} value={subLeague.id.toString()}>
+                      {subLeague.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">Alt lig seçerseniz, lig seçimi temizlenecektir.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="startDate">Başlangıç Tarihi</Label>
                 <Input
                   id="startDate"
                   name="startDate"
                   type="date"
+                  value={stage.startDate}
+                  onChange={handleChange}
                   required
-                  value={formData.startDate}
-                  onChange={handleInputChange}
-                  disabled={isLoading}
                 />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="endDate">Bitiş Tarihi</Label>
-                <Input
-                  id="endDate"
-                  name="endDate"
-                  type="date"
-                  required
-                  value={formData.endDate}
-                  onChange={handleInputChange}
-                  disabled={isLoading}
-                />
+                <Input id="endDate" name="endDate" type="date" value={stage.endDate} onChange={handleChange} required />
               </div>
             </div>
-          </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button variant="outline" type="button" onClick={() => router.back()} disabled={isLoading}>
-              İptal
-            </Button>
-            <Button type="submit" disabled={isLoading || !formData.leagueId || !formData.name}>
-              {isLoading ? "Kaydediliyor..." : "Kaydet"}
-            </Button>
-          </CardFooter>
-        </form>
+
+            <div className="flex justify-end gap-2">
+              <Link href="/admin/stages">
+                <Button variant="outline">İptal</Button>
+              </Link>
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? "Kaydediliyor..." : "Kaydet"}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
       </Card>
     </div>
   )

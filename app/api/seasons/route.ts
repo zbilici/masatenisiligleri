@@ -1,61 +1,49 @@
 import { NextResponse } from "next/server"
-import prisma from "@/lib/db"
-import { requireAdmin } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
 
 export async function GET() {
   try {
     const seasons = await prisma.season.findMany({
-      orderBy: {
-        startDate: "desc",
-      },
+      orderBy: [
+        {
+          startDate: "desc",
+        },
+      ],
     })
-
     return NextResponse.json(seasons)
   } catch (error) {
     console.error("Sezonları getirme hatası:", error)
-    return NextResponse.json({ error: "Sezonlar getirilirken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json({ error: "Sezonlar yüklenirken bir hata oluştu" }, { status: 500 })
   }
 }
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
+    const body = await request.json()
+    const { name, startDate, endDate, isActive } = body
 
-    const { name, startDate, endDate, isActive } = await req.json()
-
-    // Aktif sezon kontrolü
+    // Eğer yeni sezon aktif olarak işaretlendiyse, diğer tüm sezonları pasif yap
     if (isActive) {
-      // Diğer aktif sezonları pasif yap
       await prisma.season.updateMany({
-        where: {
-          isActive: true,
-        },
         data: {
           isActive: false,
         },
       })
     }
 
-    // Yeni sezonu oluştur
     const season = await prisma.season.create({
       data: {
         name,
         startDate: new Date(startDate),
         endDate: new Date(endDate),
-        isActive,
+        isActive: isActive || false,
       },
     })
 
-    return NextResponse.json({ season, message: "Sezon başarıyla oluşturuldu." }, { status: 201 })
+    return NextResponse.json(season)
   } catch (error) {
     console.error("Sezon oluşturma hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
-    }
-
-    return NextResponse.json({ error: "Sezon oluşturulurken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json({ error: "Sezon oluşturulurken bir hata oluştu" }, { status: 500 })
   }
 }
 

@@ -1,44 +1,71 @@
 import { NextResponse } from "next/server"
-import prisma from "@/lib/db"
-import { requireAdmin } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
 
-export async function GET(req: Request) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(req.url)
-    const clubId = searchParams.get("clubId")
-    const leagueId = searchParams.get("leagueId")
+    console.log("Takımlar getiriliyor...")
 
-    const where: any = {}
-
-    if (clubId) where.clubId = clubId
-    if (leagueId) where.leagueId = leagueId
-
+    // Önce tüm takımları getir (ilişkisiz)
     const teams = await prisma.team.findMany({
-      where,
-      include: {
-        club: true,
-        league: true,
-      },
       orderBy: {
         name: "asc",
       },
     })
 
-    return NextResponse.json(teams)
+    console.log(`${teams.length} takım başarıyla getirildi.`)
+
+    // Kulüp bilgilerini ayrı bir sorgu ile getir
+    const clubIds = [...new Set(teams.map((team) => team.clubId))]
+    const clubs = await prisma.club.findMany({
+      where: {
+        id: {
+          in: clubIds,
+        },
+      },
+    })
+
+    // Kulüp ID'lerini bir map'e dönüştür
+    const clubMap = new Map(clubs.map((club) => [club.id, club]))
+
+    // Takımlara kulüp bilgilerini ekle
+    const teamsWithClubs = teams.map((team) => {
+      const club = clubMap.get(team.clubId)
+      return {
+        ...team,
+        club: club || null,
+      }
+    })
+
+    // Kulübü olmayan takımları logla
+    const teamsWithoutClub = teamsWithClubs.filter((team) => !team.club)
+    if (teamsWithoutClub.length > 0) {
+      console.log(`${teamsWithoutClub.length} takımın kulübü bulunamadı:`)
+      teamsWithoutClub.forEach((team) => {
+        console.log(`Takım ID: ${team.id}, Adı: ${team.name}, Kulüp ID: ${team.clubId}`)
+      })
+    }
+
+    return NextResponse.json(teamsWithClubs)
   } catch (error) {
     console.error("Takımları getirme hatası:", error)
-    return NextResponse.json({ error: "Takımlar getirilirken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: "Takımlar yüklenirken bir hata oluştu",
+        details: error instanceof Error ? error.message : "Bilinmeyen hata",
+      },
+      { status: 500 },
+    )
   }
 }
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
+    const body = await request.json()
+    const { name, clubId, leagueId } = body
 
-    const { name, clubId, leagueId } = await req.json()
+    console.log("Yeni takım oluşturuluyor:", { name, clubId, leagueId })
 
-    // Kulüp kontrolü
+    // Kulübün var olup olmadığını kontrol et
     const club = await prisma.club.findUnique({
       where: {
         id: clubId,
@@ -46,11 +73,12 @@ export async function POST(req: Request) {
     })
 
     if (!club) {
-      return NextResponse.json({ error: "Kulüp bulunamadı." }, { status: 404 })
+      console.log(`Kulüp bulunamadı, ID: ${clubId}`)
+      return NextResponse.json({ error: "Belirtilen kulüp bulunamadı" }, { status: 400 })
     }
 
-    // Lig kontrolü (opsiyonel)
-    if (leagueId && leagueId !== "none") {
+    // Lig belirtilmişse, var olup olmadığını kontrol et
+    if (leagueId) {
       const league = await prisma.league.findUnique({
         where: {
           id: leagueId,
@@ -58,55 +86,30 @@ export async function POST(req: Request) {
       })
 
       if (!league) {
-        return NextResponse.json({ error: "Lig bulunamadı." }, { status: 404 })
+        console.log(`Lig bulunamadı, ID: ${leagueId}`)
+        return NextResponse.json({ error: "Belirtilen lig bulunamadı" }, { status: 400 })
       }
     }
 
-    // Takım kontrolü - SQLite için büyük/küçük harf duyarsız arama
-    const existingTeam = await prisma.team.findFirst({
-      where: {
-        name: {
-          contains: name,
-        },
-        clubId,
-      },
-    })
-
-    // Eğer aynı isimde bir takım varsa (büyük/küçük harf duyarsız)
-    if (existingTeam && existingTeam.name.toLowerCase() === name.toLowerCase()) {
-      return NextResponse.json({ error: "Bu kulüpte aynı isimde bir takım zaten mevcut." }, { status: 400 })
-    }
-
-    // leagueId "none" ise null olarak ayarla
-    const finalLeagueId = leagueId === "none" ? null : leagueId || null
-
-    // Yeni takım oluştur
     const team = await prisma.team.create({
       data: {
         name,
         clubId,
-        leagueId: finalLeagueId,
-      },
-      include: {
-        club: true,
-        league: true,
+        leagueId: leagueId || null,
       },
     })
 
-    return NextResponse.json({ team, message: "Takım başarıyla oluşturuldu." }, { status: 201 })
+    console.log("Takım başarıyla oluşturuldu:", team)
+    return NextResponse.json(team)
   } catch (error) {
     console.error("Takım oluşturma hatası:", error)
-
-    if (error instanceof Error) {
-      if (error.message === "Yönetici izni gerekli") {
-        return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
-      }
-
-      // Hata mesajını JSON olarak döndür
-      return NextResponse.json({ error: error.message || "Takım oluşturulurken bir hata oluştu." }, { status: 500 })
-    }
-
-    return NextResponse.json({ error: "Takım oluşturulurken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: "Takım oluşturulurken bir hata oluştu",
+        details: error instanceof Error ? error.message : "Bilinmeyen hata",
+      },
+      { status: 500 },
+    )
   }
 }
 

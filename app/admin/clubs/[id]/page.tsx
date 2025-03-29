@@ -1,152 +1,141 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ChevronLeft, Edit, ExternalLink } from "lucide-react"
-import prisma from "@/lib/db"
-import { notFound } from "next/navigation"
+import { ChevronLeft, Edit } from "lucide-react"
+import { prisma } from "@/lib/prisma"
 
-export default async function ClubDetailPage({ params }: { params: { id: string } }) {
+interface ClubDetailPageProps {
+  params: {
+    id: string
+  }
+}
+
+export default async function ClubDetailPage({ params }: ClubDetailPageProps) {
   // Kulüp detaylarını getir
   const club = await prisma.club.findUnique({
     where: {
-      id: params.id,
+      id: Number.parseInt(params.id), // String'i Int'e dönüştür
+    },
+    include: {
+      teams: true,
+      _count: {
+        select: {
+          teams: true,
+        },
+      },
     },
   })
 
   if (!club) {
-    notFound()
+    return (
+      <div className="flex items-center justify-center h-48">
+        <p>Kulüp bulunamadı.</p>
+      </div>
+    )
   }
-
-  // Kulübe ait takımları getir
-  const teams = await prisma.team.findMany({
-    where: {
-      clubId: club.id,
-    },
-    include: {
-      league: true,
-      _count: {
-        select: {
-          playerTeams: true,
-        },
-      },
-    },
-    orderBy: {
-      name: "asc",
-    },
-  })
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center">
-          <Button variant="ghost" size="sm" asChild>
-            <Link href="/admin/clubs">
-              <ChevronLeft className="h-4 w-4 mr-2" />
-              Geri
-            </Link>
+      <div className="flex items-center gap-2">
+        <Link href="/admin/clubs">
+          <Button variant="outline" size="icon">
+            <ChevronLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-3xl font-bold tracking-tight">{club.name}</h1>
-        </div>
-        <Button asChild>
-          <Link href={`/admin/clubs/${club.id}/edit`}>
-            <Edit className="h-4 w-4 mr-2" />
-            Düzenle
-          </Link>
-        </Button>
+        </Link>
+        <h1 className="text-3xl font-bold tracking-tight">{club.name}</h1>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
             <CardTitle>Kulüp Bilgileri</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {club.logo && (
-              <div className="flex justify-center mb-4">
-                <img src={club.logo || "/placeholder.svg"} alt={club.name} className="h-32 w-32 object-contain" />
-              </div>
-            )}
+          <CardContent>
+            <div className="space-y-4">
+              {club.logo && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Logo</p>
+                  <img
+                    src={club.logo || "/placeholder.svg"}
+                    alt={club.name}
+                    className="mt-2 max-w-full h-auto max-h-64 rounded-md"
+                  />
+                </div>
+              )}
 
-            {club.address && (
               <div>
-                <h3 className="text-sm font-medium">Adres</h3>
-                <p className="text-sm text-muted-foreground">{club.address}</p>
+                <p className="text-sm font-medium text-muted-foreground">Adres</p>
+                <p>{club.address || "-"}</p>
               </div>
-            )}
 
-            <div className="grid grid-cols-2 gap-4">
-              {club.phone && (
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <h3 className="text-sm font-medium">Telefon</h3>
-                  <p className="text-sm text-muted-foreground">{club.phone}</p>
+                  <p className="text-sm font-medium text-muted-foreground">Telefon</p>
+                  <p>{club.phone || "-"}</p>
                 </div>
-              )}
-
-              {club.email && (
                 <div>
-                  <h3 className="text-sm font-medium">E-posta</h3>
-                  <p className="text-sm text-muted-foreground">{club.email}</p>
+                  <p className="text-sm font-medium text-muted-foreground">E-posta</p>
+                  <p>{club.email || "-"}</p>
                 </div>
-              )}
+              </div>
 
-              {club.website && (
-                <div>
-                  <h3 className="text-sm font-medium">Web Sitesi</h3>
-                  <p className="text-sm text-muted-foreground">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Website</p>
+                <p>
+                  {club.website ? (
                     <a
-                      href={club.website}
+                      href={club.website.startsWith("http") ? club.website : `http://${club.website}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center text-primary hover:underline"
+                      className="text-blue-600 hover:underline"
                     >
                       {club.website}
-                      <ExternalLink className="h-3 w-3 ml-1" />
                     </a>
-                  </p>
-                </div>
-              )}
+                  ) : (
+                    "-"
+                  )}
+                </p>
+              </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Takımlar ({teams.length})</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Takımlar ({club._count.teams})</CardTitle>
+            <Link href={`/admin/clubs/${club.id}/teams`}>
+              <Button variant="outline" size="sm">
+                Takımları Yönet
+              </Button>
+            </Link>
           </CardHeader>
           <CardContent>
-            {teams.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Takım Adı</TableHead>
-                    <TableHead>Lig</TableHead>
-                    <TableHead className="text-center">Oyuncular</TableHead>
-                    <TableHead className="text-right">İşlemler</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {teams.map((team) => (
-                    <TableRow key={team.id}>
-                      <TableCell className="font-medium">{team.name}</TableCell>
-                      <TableCell>
-                        {team.league ? team.league.name : <span className="text-muted-foreground text-sm">-</span>}
-                      </TableCell>
-                      <TableCell className="text-center">{team._count.playerTeams}</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/admin/teams/${team.id}`}>Görüntüle</Link>
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
+            {club.teams.length === 0 ? (
               <p className="text-muted-foreground">Bu kulübe ait takım bulunmuyor.</p>
+            ) : (
+              <div className="space-y-2">
+                {club.teams.map((team) => (
+                  <div key={team.id} className="border rounded-md p-3">
+                    <div className="flex justify-between items-center">
+                      <p className="font-medium">{team.name}</p>
+                      <Link href={`/admin/teams/${team.id}/edit`}>
+                        <Button variant="ghost" size="sm">
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>
+      </div>
+
+      <div className="flex justify-end gap-2">
+        <Link href={`/admin/clubs/${club.id}/edit`}>
+          <Button>Düzenle</Button>
+        </Link>
       </div>
     </div>
   )

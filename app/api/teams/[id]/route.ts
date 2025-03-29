@@ -1,55 +1,81 @@
 import { NextResponse } from "next/server"
-import prisma from "@/lib/db"
-import { requireAdmin } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
 
-export async function GET(req: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
+    console.log(`Takım getiriliyor, ID: ${params.id}, Tip: ${typeof params.id}`)
+
+    // ID'yi integer'a dönüştür
+    const teamId = Number.parseInt(params.id)
+    console.log(`Dönüştürülmüş ID: ${teamId}, Tip: ${typeof teamId}`)
+
+    // Takımı getir
     const team = await prisma.team.findUnique({
       where: {
-        id: params.id,
-      },
-      include: {
-        club: true,
-        league: {
-          include: {
-            season: true,
-            gender: true,
-            leagueType: true,
-          },
-        },
+        id: teamId,
       },
     })
 
+    console.log("Takım sorgusu sonucu:", team ? "Bulundu" : "Bulunamadı")
+
     if (!team) {
-      return NextResponse.json({ error: "Takım bulunamadı." }, { status: 404 })
+      console.log("Takım bulunamadı, 404 dönülüyor")
+      return NextResponse.json({ error: "Takım bulunamadı" }, { status: 404 })
     }
 
-    return NextResponse.json(team)
+    // Kulüp bilgisini ayrı bir sorgu ile getir
+    let club = null
+    try {
+      club = await prisma.club.findUnique({
+        where: {
+          id: team.clubId,
+        },
+      })
+    } catch (error) {
+      console.log(`Kulüp bilgisi alınamadı, ID: ${team.clubId}`, error)
+    }
+
+    // Lig bilgisini ayrı bir sorgu ile getir (eğer varsa)
+    let league = null
+    if (team.leagueId) {
+      try {
+        league = await prisma.league.findUnique({
+          where: {
+            id: team.leagueId,
+          },
+        })
+      } catch (error) {
+        console.log(`Lig bilgisi alınamadı, ID: ${team.leagueId}`, error)
+      }
+    }
+
+    // Takım, kulüp ve lig bilgilerini birleştir
+    const teamWithRelations = {
+      ...team,
+      club,
+      league,
+    }
+
+    console.log("Takım başarıyla döndürülüyor")
+    return NextResponse.json(teamWithRelations)
   } catch (error) {
-    console.error("Takım detaylarını getirme hatası:", error)
-    return NextResponse.json({ error: "Takım detayları getirilirken bir hata oluştu." }, { status: 500 })
+    console.error("Takım getirme hatası:", error)
+    return NextResponse.json(
+      {
+        error: "Takım yüklenirken bir hata oluştu",
+        details: error instanceof Error ? error.message : "Bilinmeyen hata",
+      },
+      { status: 500 },
+    )
   }
 }
 
-export async function PUT(req: Request, { params }: { params: { id: string } }) {
+export async function PUT(request: Request, { params }: { params: { id: string } }) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
+    const body = await request.json()
+    const { name, clubId, leagueId } = body
 
-    const { name, clubId, leagueId } = await req.json()
-
-    // Takım kontrolü
-    const existingTeam = await prisma.team.findUnique({
-      where: {
-        id: params.id,
-      },
-    })
-
-    if (!existingTeam) {
-      return NextResponse.json({ error: "Takım bulunamadı." }, { status: 404 })
-    }
-
-    // Kulüp kontrolü
+    // Kulübün var olup olmadığını kontrol et
     const club = await prisma.club.findUnique({
       where: {
         id: clubId,
@@ -57,10 +83,10 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     })
 
     if (!club) {
-      return NextResponse.json({ error: "Kulüp bulunamadı." }, { status: 404 })
+      return NextResponse.json({ error: "Belirtilen kulüp bulunamadı" }, { status: 400 })
     }
 
-    // Lig kontrolü (opsiyonel)
+    // Lig belirtilmişse, var olup olmadığını kontrol et
     if (leagueId) {
       const league = await prisma.league.findUnique({
         where: {
@@ -69,85 +95,86 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
       })
 
       if (!league) {
-        return NextResponse.json({ error: "Lig bulunamadı." }, { status: 404 })
+        return NextResponse.json({ error: "Belirtilen lig bulunamadı" }, { status: 400 })
       }
     }
 
-    // Takımı güncelle
     const team = await prisma.team.update({
       where: {
-        id: params.id,
+        id: Number.parseInt(params.id),
       },
       data: {
         name,
         clubId,
-        leagueId,
-      },
-      include: {
-        club: true,
-        league: true,
+        leagueId: leagueId || null,
       },
     })
 
-    return NextResponse.json({ team, message: "Takım başarıyla güncellendi." })
+    return NextResponse.json(team)
   } catch (error) {
     console.error("Takım güncelleme hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
-    }
-
-    return NextResponse.json({ error: "Takım güncellenirken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: "Takım güncellenirken bir hata oluştu",
+        details: error instanceof Error ? error.message : "Bilinmeyen hata",
+      },
+      { status: 500 },
+    )
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(request: Request, { params }: { params: { id: string } }) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
-
-    // İlişkili verileri kontrol et
+    // Takıma bağlı oyuncuları kontrol et
     const playerTeamsCount = await prisma.playerTeam.count({
       where: {
-        teamId: params.id,
+        teamId: Number.parseInt(params.id),
       },
     })
 
+    if (playerTeamsCount > 0) {
+      return NextResponse.json(
+        { error: "Bu takıma bağlı oyuncular bulunmaktadır. Önce onları silmelisiniz." },
+        { status: 400 },
+      )
+    }
+
+    // Takıma bağlı maçları kontrol et
     const homeMatchesCount = await prisma.match.count({
       where: {
-        homeTeamId: params.id,
+        homeTeamId: Number.parseInt(params.id),
       },
     })
 
     const awayMatchesCount = await prisma.match.count({
       where: {
-        awayTeamId: params.id,
+        awayTeamId: Number.parseInt(params.id),
       },
     })
 
-    if (playerTeamsCount > 0 || homeMatchesCount > 0 || awayMatchesCount > 0) {
+    if (homeMatchesCount > 0 || awayMatchesCount > 0) {
       return NextResponse.json(
-        { error: "Bu takıma bağlı oyuncular veya maçlar bulunmaktadır. Önce bunları silmelisiniz." },
+        { error: "Bu takıma bağlı maçlar bulunmaktadır. Önce onları silmelisiniz." },
         { status: 400 },
       )
     }
 
-    // Takımı sil
     await prisma.team.delete({
       where: {
-        id: params.id,
+        id: Number.parseInt(params.id),
       },
     })
 
-    return NextResponse.json({ message: "Takım başarıyla silindi." })
+    return NextResponse.json({ success: true })
   } catch (error) {
     console.error("Takım silme hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
-    }
-
-    return NextResponse.json({ error: "Takım silinirken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: "Takım silinirken bir hata oluştu",
+        details: error instanceof Error ? error.message : "Bilinmeyen hata",
+      },
+      { status: 500 },
+    )
   }
 }
 

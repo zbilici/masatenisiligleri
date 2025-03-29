@@ -1,137 +1,136 @@
 import { NextResponse } from "next/server"
-import prisma from "@/lib/db"
-import { requireAdmin } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
 
-export async function GET(req: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
     const stage = await prisma.stage.findUnique({
       where: {
-        id: params.id,
+        id: Number.parseInt(params.id),
       },
       include: {
-        league: true,
+        league: {
+          include: {
+            season: true,
+            gender: true,
+            leagueType: true,
+          },
+        },
+        subLeague: {
+          include: {
+            league: true,
+          },
+        },
+        matches: {
+          include: {
+            homeTeam: {
+              include: {
+                club: true,
+              },
+            },
+            awayTeam: {
+              include: {
+                club: true,
+              },
+            },
+          },
+        },
+        rounds: true,
       },
     })
 
     if (!stage) {
-      return NextResponse.json({ error: "Etap bulunamadı." }, { status: 404 })
+      return NextResponse.json({ error: "Etap bulunamadı" }, { status: 404 })
     }
 
     return NextResponse.json(stage)
   } catch (error) {
-    console.error("Etap detaylarını getirme hatası:", error)
-    return NextResponse.json({ error: "Etap detayları getirilirken bir hata oluştu." }, { status: 500 })
+    console.error("Etap getirme hatası:", error)
+    return NextResponse.json({ error: "Etap yüklenirken bir hata oluştu" }, { status: 500 })
   }
 }
 
-export async function PUT(req: Request, { params }: { params: { id: string } }) {
+export async function PUT(request: Request, { params }: { params: { id: string } }) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
+    const body = await request.json()
+    const { name, order, leagueId, subLeagueId, startDate, endDate } = body
 
-    const { name, order, startDate, endDate, leagueId } = await req.json()
-
-    // Etap kontrolü
-    const existingStage = await prisma.stage.findUnique({
-      where: {
-        id: params.id,
-      },
-    })
-
-    if (!existingStage) {
-      return NextResponse.json({ error: "Etap bulunamadı." }, { status: 404 })
+    // Hem lig hem de alt lig seçilmişse hata döndür
+    if (leagueId && subLeagueId) {
+      return NextResponse.json(
+        { error: "Bir etap hem lige hem de alt lige bağlanamaz. Sadece birini seçin." },
+        { status: 400 },
+      )
     }
 
-    // Lig kontrolü
-    const league = await prisma.league.findUnique({
-      where: {
-        id: leagueId,
-      },
-    })
-
-    if (!league) {
-      return NextResponse.json({ error: "Lig bulunamadı." }, { status: 404 })
+    // Ne lig ne de alt lig seçilmemişse hata döndür
+    if (!leagueId && !subLeagueId) {
+      return NextResponse.json(
+        { error: "Bir etap ya lige ya da alt lige bağlı olmalıdır. Lütfen birini seçin." },
+        { status: 400 },
+      )
     }
 
-    // Etap sıra kontrolü
-    const stageWithSameOrder = await prisma.stage.findFirst({
-      where: {
-        leagueId,
-        order,
-        id: {
-          not: params.id,
-        },
-      },
-    })
-
-    if (stageWithSameOrder) {
-      return NextResponse.json({ error: "Bu sırada bir etap zaten mevcut." }, { status: 400 })
-    }
-
-    // Etabı güncelle
     const stage = await prisma.stage.update({
       where: {
-        id: params.id,
+        id: Number.parseInt(params.id),
       },
       data: {
         name,
-        order,
+        order: order || 1,
+        leagueId: leagueId || null,
+        subLeagueId: subLeagueId || null,
         startDate: new Date(startDate),
         endDate: new Date(endDate),
-        leagueId,
-      },
-      include: {
-        league: true,
       },
     })
 
-    return NextResponse.json({ stage, message: "Etap başarıyla güncellendi." })
+    return NextResponse.json(stage)
   } catch (error) {
     console.error("Etap güncelleme hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
-    }
-
-    return NextResponse.json({ error: "Etap güncellenirken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json({ error: "Etap güncellenirken bir hata oluştu" }, { status: 500 })
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(request: Request, { params }: { params: { id: string } }) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
-
-    // İlişkili verileri kontrol et
+    // Etaba bağlı maçları kontrol et
     const matchesCount = await prisma.match.count({
       where: {
-        stageId: params.id,
+        stageId: Number.parseInt(params.id),
       },
     })
 
     if (matchesCount > 0) {
       return NextResponse.json(
-        { error: "Bu etaba bağlı maçlar bulunmaktadır. Önce bunları silmelisiniz." },
+        { error: "Bu etaba bağlı maçlar bulunmaktadır. Önce onları silmelisiniz." },
         { status: 400 },
       )
     }
 
-    // Etabı sil
-    await prisma.stage.delete({
+    // Etaba bağlı turları kontrol et
+    const roundsCount = await prisma.round.count({
       where: {
-        id: params.id,
+        stageId: Number.parseInt(params.id),
       },
     })
 
-    return NextResponse.json({ message: "Etap başarıyla silindi." })
-  } catch (error) {
-    console.error("Etap silme hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
+    if (roundsCount > 0) {
+      return NextResponse.json(
+        { error: "Bu etaba bağlı turlar bulunmaktadır. Önce onları silmelisiniz." },
+        { status: 400 },
+      )
     }
 
-    return NextResponse.json({ error: "Etap silinirken bir hata oluştu." }, { status: 500 })
+    await prisma.stage.delete({
+      where: {
+        id: Number.parseInt(params.id),
+      },
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error("Etap silme hatası:", error)
+    return NextResponse.json({ error: "Etap silinirken bir hata oluştu" }, { status: 500 })
   }
 }
 

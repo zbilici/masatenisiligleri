@@ -12,25 +12,25 @@ datasource db {
 
 // Kullanıcı modeli (admin girişi için)
 model User {
-  id            String    @id @default(cuid())
+  id            Int       @id @default(autoincrement())
   name          String?
   email         String    @unique
   password      String
   role          String    @default("USER") // ADMIN, USER
   createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  updatedAt     DateTime  @default(now()) @updatedAt
 }
 
 // Sezon modeli
 model Season {
-  id            String    @id @default(cuid())
+  id            Int       @id @default(autoincrement())
   name          String    // Örn: "2024-2025 Sezonu"
   startDate     DateTime
   endDate       DateTime
   isActive      Boolean   @default(true)
   createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
+  updatedAt     DateTime  @default(now()) @updatedAt
+
   // İlişkiler
   leagues       League[]
   playerTeams   PlayerTeam[]
@@ -38,60 +38,166 @@ model Season {
 
 // Cinsiyet kategorisi
 model Gender {
-  id            String    @id @default(cuid())
+  id            Int       @id @default(autoincrement())
   name          String    // Erkekler, Kadınlar
-  
+
   // İlişkiler
   leagues       League[]
 }
 
 // Lig tipi modeli
 model LeagueType {
-  id            String    @id @default(cuid())
+  id            Int       @id @default(autoincrement())
   name          String    // Süper Lig, 1. Lig, 2. Lig, 3. Lig
   level         Int       // Sıralama için: 1, 2, 3, 4
-  
+
   // İlişkiler
   leagues       League[]
 }
 
 // Lig modeli
 model League {
-  id            String    @id @default(cuid())
+  id            Int       @id @default(autoincrement())
   name          String    // Otomatik oluşturulabilir: "2024-2025 Erkekler Süper Lig"
-  seasonId      String
-  genderId      String
-  leagueTypeId  String
+  seasonId      Int
+  genderId      Int
+  leagueTypeId  Int
+  matchSystemId Int?      // Lig için kullanılacak maç sistemi
   createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
+  updatedAt     DateTime  @default(now()) @updatedAt
+
   // İlişkiler
   season        Season    @relation(fields: [seasonId], references: [id])
   gender        Gender    @relation(fields: [genderId], references: [id])
   leagueType    LeagueType @relation(fields: [leagueTypeId], references: [id])
+  matchSystem   MatchSystem? @relation(fields: [matchSystemId], references: [id])
   stages        Stage[]
   teams         Team[]    // Lige katılan takımlar
+  subLeagues    SubLeague[] // Alt ligler (Play-off, Klasman, Final Four)
+}
+
+// Alt Lig modeli (Play-off, Klasman, Final Four)
+model SubLeague {
+  id            Int       @id @default(autoincrement())
+  name          String    // Play-off, Klasman, Final Four
+  leagueId      Int
+  parentId      Int?      // Üst alt lig (örn: Dörtlü Final için Play Off)
+  matchSystemId Int?      // Alt lig için kullanılacak maç sistemi (ana ligden farklı olabilir)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  // İlişkiler
+  league        League    @relation(fields: [leagueId], references: [id])
+  parent        SubLeague? @relation("SubLeagueHierarchy", fields: [parentId], references: [id])
+  children      SubLeague[] @relation("SubLeagueHierarchy")
+  matchSystem   MatchSystem? @relation(fields: [matchSystemId], references: [id])
+  stages        Stage[]
+  teams         Team[]    @relation("SubLeagueTeams")
+}
+
+// Maç Sistemi modeli
+model MatchSystem {
+  id            Int       @id @default(autoincrement())
+  name          String    // Swaythling, Corbillon, Olympic, Düsseldorf, Özel
+  type          String    // PREDEFINED, CUSTOM
+  totalMatches  Int       // Toplam oynanacak maç sayısı
+  singlesCount  Int       // Tekli maç sayısı
+  doublesCount  Int       // Çiftli maç sayısı
+  matchOrder    String    // JSON formatında maç sırası: ["S1", "S2", "D1", "S3", "S4"]
+  description   String?   // Sistem açıklaması
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  // İlişkiler
+  leagues       League[]
+  subLeagues    SubLeague[]
+  matches       Match[]
 }
 
 // Etap modeli
 model Stage {
-  id            String    @id @default(cuid())
+  id            Int       @id @default(autoincrement())
   name          String    // 1. Etap, 2. Etap
   order         Int       // Sıralama için
   startDate     DateTime
   endDate       DateTime
-  leagueId      String
+  leagueId      Int?
+  subLeagueId   Int?
   createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
+  updatedAt     DateTime  @default(now()) @updatedAt
+
   // İlişkiler
-  league        League    @relation(fields: [leagueId], references: [id])
+  league        League?   @relation(fields: [leagueId], references: [id])
+  subLeague     SubLeague? @relation(fields: [subLeagueId], references: [id])
   matches       Match[]
+  rounds        Round[]   // Yeni eklenen ilişki
+
+  // Her etap ya ana lige ya da alt lige bağlı olmalı, ikisi birden olamaz
+  // SQLite @@check kısıtlamasını desteklemediği için kaldırıldı
+  // Uygulama seviyesinde kontrol edilecek
+}
+
+// Tur modeli (Yeni eklendi)
+model Round {
+  id            Int       @id @default(autoincrement())
+  name          String    // 1. Tur, 2. Tur, vb.
+  order         Int       // Sıralama için
+  stageId       Int       // Bağlı olduğu etap
+  startDate     DateTime
+  endDate       DateTime
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  // İlişkiler
+  stage         Stage     @relation(fields: [stageId], references: [id])
+  matches       Match[]
+}
+
+// Saha/Salon modeli (Yeni eklendi)
+model Playground {
+  id            Int       @id @default(autoincrement())
+  name          String    // Salon adı
+  address       String?   // Adres
+  city          String?   // Şehir
+  capacity      Int?      // Kapasite
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  // İlişkiler
+  matches       Match[]
+}
+
+// Pozisyon modeli (Yeni eklendi)
+model Position {
+  id            Int       @id @default(autoincrement())
+  name          String    // Forvet, Defans, vb.
+  description   String?   // Açıklama
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  // İlişkiler
+  playerPositions PlayerPosition[]
+}
+
+// Oyuncu-Pozisyon ilişkisi (Yeni eklendi)
+model PlayerPosition {
+  id            Int       @id @default(autoincrement())
+  playerId      Int
+  positionId    Int
+  isPrimary     Boolean   @default(false) // Ana pozisyon mu?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  // İlişkiler
+  player        Player    @relation(fields: [playerId], references: [id])
+  position      Position  @relation(fields: [positionId], references: [id])
+
+  @@unique([playerId, positionId])
 }
 
 // Kulüp modeli
 model Club {
-  id            String    @id @default(cuid())
+  id            Int       @id @default(autoincrement())
   name          String
   logo          String?
   address       String?
@@ -99,24 +205,25 @@ model Club {
   email         String?
   website       String?
   createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
+  updatedAt     DateTime  @default(now()) @updatedAt
+
   // İlişkiler
   teams         Team[]
 }
 
 // Takım modeli
 model Team {
-  id            String    @id @default(cuid())
+  id            Int       @id @default(autoincrement())
   name          String
-  clubId        String
-  leagueId      String?   // Takımın katıldığı lig (opsiyonel, her sezon değişebilir)
+  clubId        Int
+  leagueId      Int?      // Takımın katıldığı lig (opsiyonel, her sezon değişebilir)
   createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
+  updatedAt     DateTime  @default(now()) @updatedAt
+
   // İlişkiler
   club          Club      @relation(fields: [clubId], references: [id])
   league        League?   @relation(fields: [leagueId], references: [id])
+  subLeagues    SubLeague[] @relation("SubLeagueTeams")
   homeMatches   Match[]   @relation("HomeTeam")
   awayMatches   Match[]   @relation("AwayTeam")
   playerTeams   PlayerTeam[]
@@ -124,7 +231,7 @@ model Team {
 
 // Oyuncu modeli
 model Player {
-  id            String    @id @default(cuid())
+  id            Int       @id @default(autoincrement())
   firstName     String
   lastName      String
   birthDate     DateTime?
@@ -132,62 +239,125 @@ model Player {
   licenseNumber String?   // Lisans numarası
   photo         String?
   createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
+  updatedAt     DateTime  @default(now()) @updatedAt
+
   // İlişkiler
   playerTeams   PlayerTeam[]
-  matchScores   MatchScore[]
+  positions     PlayerPosition[]
+  individualMatches IndividualMatch[] @relation("PlayerIndividualMatches")
+  opponentMatches  IndividualMatch[] @relation("OpponentIndividualMatches")
+  homeDoubles1   DoublesMatch[] @relation("HomeDoublesPlayer1")
+  homeDoubles2   DoublesMatch[] @relation("HomeDoublesPlayer2")
+  awayDoubles1   DoublesMatch[] @relation("AwayDoublesPlayer1")
+  awayDoubles2   DoublesMatch[] @relation("AwayDoublesPlayer2")
 }
 
 // Oyuncu-Takım ilişkisi (her sezon için)
 model PlayerTeam {
-  id            String    @id @default(cuid())
-  playerId      String
-  teamId        String
-  seasonId      String
+  id            Int       @id @default(autoincrement())
+  playerId      Int
+  teamId        Int
+  seasonId      Int
   joinDate      DateTime  @default(now())
   leaveDate     DateTime?
-  
+
   // İlişkiler
   player        Player    @relation(fields: [playerId], references: [id])
   team          Team      @relation(fields: [teamId], references: [id])
   season        Season    @relation(fields: [seasonId], references: [id])
-  
+
   @@unique([playerId, teamId, seasonId])
 }
 
-// Maç modeli
+// Maç modeli (Takımlar arası)
 model Match {
-  id            String    @id @default(cuid())
-  stageId       String
-  homeTeamId    String
-  awayTeamId    String
+  id            Int       @id @default(autoincrement())
+  stageId       Int
+  roundId       Int?      // Yeni eklenen alan
+  homeTeamId    Int
+  awayTeamId    Int
+  matchSystemId Int?      // Kullanılan maç sistemi
+  playgroundId  Int?      // Yeni eklenen alan
   matchDate     DateTime
   location      String?
   status        String    @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
+  homeScore     Int?      // Ev sahibi takımın toplam skoru
+  awayScore     Int?      // Deplasman takımının toplam skoru
   createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
+  updatedAt     DateTime  @default(now()) @updatedAt
+
   // İlişkiler
   stage         Stage     @relation(fields: [stageId], references: [id])
+  round         Round?    @relation(fields: [roundId], references: [id])
   homeTeam      Team      @relation("HomeTeam", fields: [homeTeamId], references: [id])
   awayTeam      Team      @relation("AwayTeam", fields: [awayTeamId], references: [id])
-  matchScores   MatchScore[]
+  matchSystem   MatchSystem? @relation(fields: [matchSystemId], references: [id])
+  playground    Playground? @relation(fields: [playgroundId], references: [id])
+  individualMatches IndividualMatch[]
+  doublesMatches DoublesMatch[]
 }
 
-// Maç skoru modeli (oyuncu bazlı)
-model MatchScore {
-  id            String    @id @default(cuid())
-  matchId       String
-  playerId      String
-  isHomeTeam    Boolean   // Ev sahibi takımda mı?
-  sets          String    // JSON formatında set skorları: [11-5, 5-11, 11-7, 11-9]
-  result        String    // W (Kazandı), L (Kaybetti)
-  
+// Bireysel Maç modeli (Tekli maçlar)
+model IndividualMatch {
+  id            Int       @id @default(autoincrement())
+  matchId       Int       // Bağlı olduğu takım maçı
+  matchOrder    Int       // Maç sırası (1, 2, 3, 4, 5...)
+  playerId      Int       // Ev sahibi takım oyuncusu
+  opponentId    Int       // Deplasman takım oyuncusu
+  playerScore   Int?      // Ev sahibi oyuncu skor
+  opponentScore Int?      // Deplasman oyuncu skor
+  status        String    @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
   // İlişkiler
   match         Match     @relation(fields: [matchId], references: [id])
-  player        Player    @relation(fields: [playerId], references: [id])
-  
-  @@unique([matchId, playerId])
+  player        Player    @relation("PlayerIndividualMatches", fields: [playerId], references: [id])
+  opponent      Player    @relation("OpponentIndividualMatches", fields: [opponentId], references: [id])
+  sets          Set[]
+}
+
+// Çiftler Maç modeli (Doubles maçlar)
+model DoublesMatch {
+  id            Int       @id @default(autoincrement())
+  matchId       Int       // Bağlı olduğu takım maçı
+  matchOrder    Int       // Maç sırası
+  homePlayer1Id Int       // Ev sahibi takım 1. oyuncu
+  homePlayer2Id Int       // Ev sahibi takım 2. oyuncu
+  awayPlayer1Id Int       // Deplasman takım 1. oyuncu
+  awayPlayer2Id Int       // Deplasman takım 2. oyuncu
+  homeScore     Int?      // Ev sahibi çift skor
+  awayScore     Int?      // Deplasman çift skor
+  status        String    @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  // İlişkiler
+  match         Match     @relation(fields: [matchId], references: [id])
+  homePlayer1   Player    @relation("HomeDoublesPlayer1", fields: [homePlayer1Id], references: [id])
+  homePlayer2   Player    @relation("HomeDoublesPlayer2", fields: [homePlayer2Id], references: [id])
+  awayPlayer1   Player    @relation("AwayDoublesPlayer1", fields: [awayPlayer1Id], references: [id])
+  awayPlayer2   Player    @relation("AwayDoublesPlayer2", fields: [awayPlayer2Id], references: [id])
+  sets          Set[]
+}
+
+// Set modeli (Bireysel veya çiftler maçlarındaki setler)
+model Set {
+  id                Int       @id @default(autoincrement())
+  individualMatchId Int?      // Bağlı olduğu bireysel maç
+  doublesMatchId    Int?      // Bağlı olduğu çiftler maçı
+  setNumber         Int       // Set numarası (1, 2, 3, 4, 5)
+  homeScore         Int       // Ev sahibi oyuncu/çift skor
+  awayScore         Int       // Deplasman oyuncu/çift skor
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt
+
+  // İlişkiler
+  individualMatch   IndividualMatch? @relation(fields: [individualMatchId], references: [id])
+  doublesMatch      DoublesMatch?    @relation(fields: [doublesMatchId], references: [id])
+
+  // Her set ya bireysel maça ya da çiftler maçına bağlı olmalı, ikisi birden olamaz
+  // SQLite @@check kısıtlamasını desteklemediği için kaldırıldı
+  // Uygulama seviyesinde kontrol edilecek
 }
 

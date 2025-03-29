@@ -1,83 +1,78 @@
 import { NextResponse } from "next/server"
-import prisma from "@/lib/db"
-import { requireAdmin } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
 
-export async function GET(req: Request) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(req.url)
-    const leagueId = searchParams.get("leagueId")
-
-    const where: any = {}
-    if (leagueId) where.leagueId = leagueId
-
     const stages = await prisma.stage.findMany({
-      where,
       include: {
-        league: true,
+        league: {
+          include: {
+            season: true,
+            gender: true,
+            leagueType: true,
+          },
+        },
+        subLeague: {
+          include: {
+            league: true,
+          },
+        },
+        _count: {
+          select: {
+            matches: true,
+            rounds: true,
+          },
+        },
       },
-      orderBy: [{ leagueId: "asc" }, { order: "asc" }],
+      orderBy: [
+        {
+          startDate: "desc",
+        },
+      ],
     })
-
     return NextResponse.json(stages)
   } catch (error) {
     console.error("Etapları getirme hatası:", error)
-    return NextResponse.json({ error: "Etaplar getirilirken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json({ error: "Etaplar yüklenirken bir hata oluştu" }, { status: 500 })
   }
 }
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
+    const body = await request.json()
+    const { name, order, leagueId, subLeagueId, startDate, endDate } = body
 
-    const { name, order, startDate, endDate, leagueId } = await req.json()
-
-    // Lig kontrolü
-    const league = await prisma.league.findUnique({
-      where: {
-        id: leagueId,
-      },
-    })
-
-    if (!league) {
-      return NextResponse.json({ error: "Lig bulunamadı." }, { status: 404 })
+    // Hem lig hem de alt lig seçilmişse hata döndür
+    if (leagueId && subLeagueId) {
+      return NextResponse.json(
+        { error: "Bir etap hem lige hem de alt lige bağlanamaz. Sadece birini seçin." },
+        { status: 400 },
+      )
     }
 
-    // Etap sıra kontrolü
-    const existingStage = await prisma.stage.findFirst({
-      where: {
-        leagueId,
-        order,
-      },
-    })
-
-    if (existingStage) {
-      return NextResponse.json({ error: "Bu sırada bir etap zaten mevcut." }, { status: 400 })
+    // Ne lig ne de alt lig seçilmemişse hata döndür
+    if (!leagueId && !subLeagueId) {
+      return NextResponse.json(
+        { error: "Bir etap ya lige ya da alt lige bağlı olmalıdır. Lütfen birini seçin." },
+        { status: 400 },
+      )
     }
 
-    // Yeni etap oluştur
     const stage = await prisma.stage.create({
       data: {
         name,
-        order,
+        order: order || 1,
+        leagueId: leagueId ? Number.parseInt(leagueId) : null,
+        subLeagueId: subLeagueId ? Number.parseInt(subLeagueId) : null,
         startDate: new Date(startDate),
         endDate: new Date(endDate),
-        leagueId,
-      },
-      include: {
-        league: true,
       },
     })
 
-    return NextResponse.json({ stage, message: "Etap başarıyla oluşturuldu." }, { status: 201 })
+    return NextResponse.json(stage)
   } catch (error) {
     console.error("Etap oluşturma hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
-    }
-
-    return NextResponse.json({ error: "Etap oluşturulurken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json({ error: "Etap oluşturulurken bir hata oluştu" }, { status: 500 })
   }
 }
 

@@ -1,52 +1,36 @@
 import { NextResponse } from "next/server"
-import prisma from "@/lib/db"
-import { requireAdmin } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
 
-export async function GET(req: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
     const season = await prisma.season.findUnique({
       where: {
-        id: params.id,
+        id: Number.parseInt(params.id),
       },
     })
 
     if (!season) {
-      return NextResponse.json({ error: "Sezon bulunamadı." }, { status: 404 })
+      return NextResponse.json({ error: "Sezon bulunamadı" }, { status: 404 })
     }
 
     return NextResponse.json(season)
   } catch (error) {
-    console.error("Sezon detaylarını getirme hatası:", error)
-    return NextResponse.json({ error: "Sezon detayları getirilirken bir hata oluştu." }, { status: 500 })
+    console.error("Sezon getirme hatası:", error)
+    return NextResponse.json({ error: "Sezon bilgileri alınamadı" }, { status: 500 })
   }
 }
 
-export async function PUT(req: Request, { params }: { params: { id: string } }) {
+export async function PUT(request: Request, { params }: { params: { id: string } }) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
+    const body = await request.json()
+    const { name, startDate, endDate, isActive } = body
 
-    const { name, startDate, endDate, isActive } = await req.json()
-
-    // Sezon kontrolü
-    const existingSeason = await prisma.season.findUnique({
-      where: {
-        id: params.id,
-      },
-    })
-
-    if (!existingSeason) {
-      return NextResponse.json({ error: "Sezon bulunamadı." }, { status: 404 })
-    }
-
-    // Aktif sezon kontrolü
+    // Eğer sezon aktif olarak işaretlendiyse, diğer tüm sezonları pasif yap
     if (isActive) {
-      // Diğer aktif sezonları pasif yap
       await prisma.season.updateMany({
         where: {
-          isActive: true,
           id: {
-            not: params.id,
+            not: Number.parseInt(params.id),
           },
         },
         data: {
@@ -55,10 +39,9 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
       })
     }
 
-    // Sezonu güncelle
     const season = await prisma.season.update({
       where: {
-        id: params.id,
+        id: Number.parseInt(params.id),
       },
       data: {
         name,
@@ -68,53 +51,53 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
       },
     })
 
-    return NextResponse.json({ season, message: "Sezon başarıyla güncellendi." })
+    return NextResponse.json(season)
   } catch (error) {
     console.error("Sezon güncelleme hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
-    }
-
-    return NextResponse.json({ error: "Sezon güncellenirken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json({ error: "Sezon güncellenirken bir hata oluştu" }, { status: 500 })
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(request: Request, { params }: { params: { id: string } }) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
-
-    // İlişkili verileri kontrol et
+    // Sezona bağlı ligleri kontrol et
     const leaguesCount = await prisma.league.count({
       where: {
-        seasonId: params.id,
+        seasonId: Number.parseInt(params.id),
       },
     })
 
     if (leaguesCount > 0) {
       return NextResponse.json(
-        { error: "Bu sezona bağlı ligler bulunmaktadır. Önce bunları silmelisiniz." },
+        { error: "Bu sezona bağlı ligler bulunmaktadır. Önce onları silmelisiniz." },
         { status: 400 },
       )
     }
 
-    // Sezonu sil
-    await prisma.season.delete({
+    // Sezona bağlı oyuncu-takım ilişkilerini kontrol et
+    const playerTeamsCount = await prisma.playerTeam.count({
       where: {
-        id: params.id,
+        seasonId: Number.parseInt(params.id),
       },
     })
 
-    return NextResponse.json({ message: "Sezon başarıyla silindi." })
-  } catch (error) {
-    console.error("Sezon silme hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
+    if (playerTeamsCount > 0) {
+      return NextResponse.json(
+        { error: "Bu sezona bağlı oyuncu-takım ilişkileri bulunmaktadır. Önce onları silmelisiniz." },
+        { status: 400 },
+      )
     }
 
-    return NextResponse.json({ error: "Sezon silinirken bir hata oluştu." }, { status: 500 })
+    await prisma.season.delete({
+      where: {
+        id: Number.parseInt(params.id),
+      },
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error("Sezon silme hatası:", error)
+    return NextResponse.json({ error: "Sezon silinirken bir hata oluştu" }, { status: 500 })
   }
 }
 

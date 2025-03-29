@@ -1,19 +1,19 @@
 "use client"
 
-import React from "react"
+import type React from "react"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
 import { ChevronLeft } from "lucide-react"
 
 interface Club {
-  id: string
+  id: number
   name: string
   logo: string | null
   address: string | null
@@ -22,49 +22,28 @@ interface Club {
   website: string | null
 }
 
-export default function EditClubPage({ params }: { params: { id: string } }) {
+export default function EditClubPage() {
+  const params = useParams()
   const router = useRouter()
   const { toast } = useToast()
+  const [club, setClub] = useState<Club | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [formData, setFormData] = useState<Club>({
-    id: "",
-    name: "",
-    logo: "",
-    address: "",
-    phone: "",
-    email: "",
-    website: "",
-  })
-
-  // React.use() ile params.id'yi çözelim
-  const id = React.use(params).id
+  const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
-    // Kulüp verilerini getir
     const fetchClub = async () => {
       try {
-        const response = await fetch(`/api/clubs/${id}`)
-
+        const response = await fetch(`/api/clubs/${params.id}`)
         if (!response.ok) {
-          throw new Error("Kulüp bilgileri alınamadı")
+          throw new Error("Kulüp yüklenirken bir hata oluştu")
         }
-
-        const club = await response.json()
-
-        setFormData({
-          id: club.id,
-          name: club.name,
-          logo: club.logo || "",
-          address: club.address || "",
-          phone: club.phone || "",
-          email: club.email || "",
-          website: club.website || "",
-        })
+        const data = await response.json()
+        setClub(data)
       } catch (error) {
         console.error("Kulüp getirme hatası:", error)
         toast({
           title: "Hata",
-          description: "Kulüp bilgileri yüklenirken bir hata oluştu.",
+          description: error instanceof Error ? error.message : "Kulüp yüklenirken bir hata oluştu.",
           variant: "destructive",
         })
       } finally {
@@ -73,48 +52,49 @@ export default function EditClubPage({ params }: { params: { id: string } }) {
     }
 
     fetchClub()
-  }, [id, toast])
+  }, [params.id, toast])
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    setIsLoading(true)
+    if (!club) return
+
+    setIsSaving(true)
 
     try {
-      const response = await fetch(`/api/clubs/${id}`, {
+      const response = await fetch(`/api/clubs/${params.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(club),
       })
 
-      const data = await response.json()
-
       if (!response.ok) {
-        throw new Error(data.error || "Kulüp güncellenirken bir hata oluştu.")
+        const data = await response.json()
+        throw new Error(data.error || "Kulüp güncellenirken bir hata oluştu")
       }
 
       toast({
-        title: "Kulüp güncellendi",
-        description: "Kulüp bilgileri başarıyla güncellendi.",
+        title: "Başarılı",
+        description: "Kulüp başarıyla güncellendi.",
       })
 
-      router.push("/admin/clubs")
+      router.push(`/admin/clubs/${params.id}`)
     } catch (error) {
       console.error("Kulüp güncelleme hatası:", error)
       toast({
-        title: "Kulüp güncellenemedi",
-        description: error instanceof Error ? error.message : "Bir hata oluştu",
+        title: "Hata",
+        description: error instanceof Error ? error.message : "Kulüp güncellenirken bir hata oluştu.",
         variant: "destructive",
       })
     } finally {
-      setIsLoading(false)
+      setIsSaving(false)
     }
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target
+    setClub((prev) => (prev ? { ...prev, [name]: value } : null))
   }
 
   if (isLoading) {
@@ -125,32 +105,34 @@ export default function EditClubPage({ params }: { params: { id: string } }) {
     )
   }
 
+  if (!club) {
+    return (
+      <div className="flex items-center justify-center h-48">
+        <p>Kulüp bulunamadı.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center">
-        <Button variant="ghost" size="sm" onClick={() => router.back()} className="mr-2">
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
+      <div className="flex items-center gap-2">
+        <Link href={`/admin/clubs/${params.id}`}>
+          <Button variant="outline" size="icon">
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+        </Link>
         <h1 className="text-3xl font-bold tracking-tight">Kulüp Düzenle</h1>
       </div>
 
       <Card>
-        <form onSubmit={handleSubmit}>
-          <CardHeader>
-            <CardTitle>Kulüp Bilgileri</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <CardHeader>
+          <CardTitle>Kulüp Bilgileri</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="name">Kulüp Adı</Label>
-              <Input
-                id="name"
-                name="name"
-                placeholder="Kulüp adı"
-                required
-                value={formData.name}
-                onChange={handleChange}
-                disabled={isLoading}
-              />
+              <Input id="name" name="name" value={club.name} onChange={handleChange} required />
             </div>
 
             <div className="space-y-2">
@@ -158,73 +140,50 @@ export default function EditClubPage({ params }: { params: { id: string } }) {
               <Input
                 id="logo"
                 name="logo"
-                placeholder="Logo URL (opsiyonel)"
-                value={formData.logo || ""}
+                value={club.logo || ""}
                 onChange={handleChange}
-                disabled={isLoading}
+                placeholder="https://example.com/logo.png"
               />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="address">Adres</Label>
-              <Textarea
-                id="address"
-                name="address"
-                placeholder="Adres (opsiyonel)"
-                value={formData.address || ""}
-                onChange={handleChange}
-                disabled={isLoading}
-              />
+              <Input id="address" name="address" value={club.address || ""} onChange={handleChange} />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="phone">Telefon</Label>
-                <Input
-                  id="phone"
-                  name="phone"
-                  placeholder="Telefon (opsiyonel)"
-                  value={formData.phone || ""}
-                  onChange={handleChange}
-                  disabled={isLoading}
-                />
+                <Input id="phone" name="phone" value={club.phone || ""} onChange={handleChange} />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="email">E-posta</Label>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="E-posta (opsiyonel)"
-                  value={formData.email || ""}
-                  onChange={handleChange}
-                  disabled={isLoading}
-                />
+                <Input id="email" name="email" type="email" value={club.email || ""} onChange={handleChange} />
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="website">Web Sitesi</Label>
+              <Label htmlFor="website">Website</Label>
               <Input
                 id="website"
                 name="website"
-                placeholder="Web sitesi (opsiyonel)"
-                value={formData.website || ""}
+                value={club.website || ""}
                 onChange={handleChange}
-                disabled={isLoading}
+                placeholder="https://example.com"
               />
             </div>
-          </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button variant="outline" type="button" onClick={() => router.back()} disabled={isLoading}>
-              İptal
-            </Button>
-            <Button type="submit" disabled={isLoading}>
-              {isLoading ? "Kaydediliyor..." : "Kaydet"}
-            </Button>
-          </CardFooter>
-        </form>
+
+            <div className="flex justify-end gap-2">
+              <Link href={`/admin/clubs/${params.id}`}>
+                <Button variant="outline">İptal</Button>
+              </Link>
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? "Kaydediliyor..." : "Kaydet"}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
       </Card>
     </div>
   )

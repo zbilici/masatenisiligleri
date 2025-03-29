@@ -1,85 +1,117 @@
 import { NextResponse } from "next/server"
-import prisma from "@/lib/db"
-import { requireAdmin } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
 
-export async function GET(req: Request) {
+export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
-    const { searchParams } = new URL(req.url)
-    const seasonId = searchParams.get("seasonId")
-    const genderId = searchParams.get("genderId")
-    const leagueTypeId = searchParams.get("leagueTypeId")
-
-    const where: any = {}
-
-    if (seasonId) where.seasonId = seasonId
-    if (genderId) where.genderId = genderId
-    if (leagueTypeId) where.leagueTypeId = leagueTypeId
-
-    const leagues = await prisma.league.findMany({
-      where,
+    const league = await prisma.league.findUnique({
+      where: {
+        id: Number.parseInt(params.id),
+      },
       include: {
         season: true,
         gender: true,
         leagueType: true,
-      },
-      orderBy: {
-        createdAt: "desc",
+        matchSystem: true,
+        teams: {
+          include: {
+            club: true,
+          },
+        },
+        stages: true,
+        subLeagues: true,
       },
     })
 
-    return NextResponse.json(leagues)
+    if (!league) {
+      return NextResponse.json({ error: "Lig bulunamadı" }, { status: 404 })
+    }
+
+    return NextResponse.json(league)
   } catch (error) {
-    console.error("Ligleri getirme hatası:", error)
-    return NextResponse.json({ error: "Ligler getirilirken bir hata oluştu." }, { status: 500 })
+    console.error("Lig getirme hatası:", error)
+    return NextResponse.json({ error: "Lig bilgileri alınamadı" }, { status: 500 })
   }
 }
 
-export async function POST(req: Request) {
+export async function PUT(request: Request, { params }: { params: { id: string } }) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
+    const body = await request.json()
+    const { name, seasonId, genderId, leagueTypeId, matchSystemId } = body
 
-    const { name, seasonId, genderId, leagueTypeId } = await req.json()
-
-    // Lig kontrolü
-    const existingLeague = await prisma.league.findFirst({
+    const league = await prisma.league.update({
       where: {
-        name: {
-          equals: name,
-          mode: "insensitive",
-        },
-        seasonId,
+        id: Number.parseInt(params.id),
       },
-    })
-
-    if (existingLeague) {
-      return NextResponse.json({ error: "Bu isimde bir lig zaten mevcut." }, { status: 400 })
-    }
-
-    // Yeni lig oluştur
-    const league = await prisma.league.create({
       data: {
         name,
         seasonId,
         genderId,
         leagueTypeId,
-      },
-      include: {
-        season: true,
-        gender: true,
-        leagueType: true,
+        matchSystemId: matchSystemId || null,
       },
     })
 
-    return NextResponse.json({ league, message: "Lig başarıyla oluşturuldu." }, { status: 201 })
+    return NextResponse.json(league)
   } catch (error) {
-    console.error("Lig oluşturma hatası:", error)
+    console.error("Lig güncelleme hatası:", error)
+    return NextResponse.json({ error: "Lig güncellenirken bir hata oluştu" }, { status: 500 })
+  }
+}
 
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
+export async function DELETE(request: Request, { params }: { params: { id: string } }) {
+  try {
+    // Lige bağlı takımları kontrol et
+    const teamsCount = await prisma.team.count({
+      where: {
+        leagueId: Number.parseInt(params.id),
+      },
+    })
+
+    if (teamsCount > 0) {
+      return NextResponse.json(
+        { error: "Bu lige bağlı takımlar bulunmaktadır. Önce onları silmelisiniz." },
+        { status: 400 },
+      )
     }
 
-    return NextResponse.json({ error: "Lig oluşturulurken bir hata oluştu." }, { status: 500 })
+    // Lige bağlı etapları kontrol et
+    const stagesCount = await prisma.stage.count({
+      where: {
+        leagueId: Number.parseInt(params.id),
+      },
+    })
+
+    if (stagesCount > 0) {
+      return NextResponse.json(
+        { error: "Bu lige bağlı etaplar bulunmaktadır. Önce onları silmelisiniz." },
+        { status: 400 },
+      )
+    }
+
+    // Lige bağlı alt ligleri kontrol et
+    const subLeaguesCount = await prisma.subLeague.count({
+      where: {
+        leagueId: Number.parseInt(params.id),
+      },
+    })
+
+    if (subLeaguesCount > 0) {
+      return NextResponse.json(
+        { error: "Bu lige bağlı alt ligler bulunmaktadır. Önce onları silmelisiniz." },
+        { status: 400 },
+      )
+    }
+
+    await prisma.league.delete({
+      where: {
+        id: Number.parseInt(params.id),
+      },
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error("Lig silme hatası:", error)
+    return NextResponse.json({ error: "Lig silinirken bir hata oluştu" }, { status: 500 })
   }
 }
 

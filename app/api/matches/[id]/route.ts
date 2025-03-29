@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server"
-import prisma from "@/lib/db"
-import { requireAdmin } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
 
-export async function GET(req: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
     const match = await prisma.match.findUnique({
       where: {
-        id: params.id,
+        id: Number.parseInt(params.id),
       },
       include: {
         stage: {
           include: {
             league: true,
+            subLeague: true,
           },
         },
+        round: true,
         homeTeam: {
           include: {
             club: true,
@@ -24,44 +25,56 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
             club: true,
           },
         },
-        matchScores: {
+        matchSystem: true,
+        playground: true,
+        individualMatches: {
           include: {
             player: true,
+            opponent: true,
+            sets: true,
+          },
+        },
+        doublesMatches: {
+          include: {
+            homePlayer1: true,
+            homePlayer2: true,
+            awayPlayer1: true,
+            awayPlayer2: true,
+            sets: true,
           },
         },
       },
     })
 
     if (!match) {
-      return NextResponse.json({ error: "Maç bulunamadı." }, { status: 404 })
+      return NextResponse.json({ error: "Maç bulunamadı" }, { status: 404 })
     }
 
     return NextResponse.json(match)
   } catch (error) {
-    console.error("Maç detaylarını getirme hatası:", error)
-    return NextResponse.json({ error: "Maç detayları getirilirken bir hata oluştu." }, { status: 500 })
+    console.error("Maç getirme hatası:", error)
+    return NextResponse.json({ error: "Maç yüklenirken bir hata oluştu" }, { status: 500 })
   }
 }
 
-export async function PUT(req: Request, { params }: { params: { id: string } }) {
+export async function PUT(request: Request, { params }: { params: { id: string } }) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
+    const body = await request.json()
+    const {
+      stageId,
+      roundId,
+      homeTeamId,
+      awayTeamId,
+      matchSystemId,
+      playgroundId,
+      matchDate,
+      location,
+      status,
+      homeScore,
+      awayScore,
+    } = body
 
-    const { stageId, homeTeamId, awayTeamId, matchDate, location, status } = await req.json()
-
-    // Maç kontrolü
-    const existingMatch = await prisma.match.findUnique({
-      where: {
-        id: params.id,
-      },
-    })
-
-    if (!existingMatch) {
-      return NextResponse.json({ error: "Maç bulunamadı." }, { status: 404 })
-    }
-
-    // Etap kontrolü
+    // Etabın var olup olmadığını kontrol et
     const stage = await prisma.stage.findUnique({
       where: {
         id: stageId,
@@ -69,10 +82,28 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     })
 
     if (!stage) {
-      return NextResponse.json({ error: "Etap bulunamadı." }, { status: 404 })
+      return NextResponse.json({ error: "Belirtilen etap bulunamadı" }, { status: 400 })
     }
 
-    // Takım kontrolleri
+    // Turun var olup olmadığını kontrol et (eğer belirtilmişse)
+    if (roundId) {
+      const round = await prisma.round.findUnique({
+        where: {
+          id: roundId,
+        },
+      })
+
+      if (!round) {
+        return NextResponse.json({ error: "Belirtilen tur bulunamadı" }, { status: 400 })
+      }
+
+      // Turun etaba ait olup olmadığını kontrol et
+      if (round.stageId !== stageId) {
+        return NextResponse.json({ error: "Belirtilen tur bu etaba ait değil" }, { status: 400 })
+      }
+    }
+
+    // Ev sahibi takımın var olup olmadığını kontrol et
     const homeTeam = await prisma.team.findUnique({
       where: {
         id: homeTeamId,
@@ -80,9 +111,10 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     })
 
     if (!homeTeam) {
-      return NextResponse.json({ error: "Ev sahibi takım bulunamadı." }, { status: 404 })
+      return NextResponse.json({ error: "Belirtilen ev sahibi takım bulunamadı" }, { status: 400 })
     }
 
+    // Deplasman takımının var olup olmadığını kontrol et
     const awayTeam = await prisma.team.findUnique({
       where: {
         id: awayTeamId,
@@ -90,81 +122,106 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     })
 
     if (!awayTeam) {
-      return NextResponse.json({ error: "Deplasman takımı bulunamadı." }, { status: 404 })
+      return NextResponse.json({ error: "Belirtilen deplasman takımı bulunamadı" }, { status: 400 })
     }
 
-    // Aynı takım kontrolü
+    // Maç sisteminin var olup olmadığını kontrol et (eğer belirtilmişse)
+    if (matchSystemId) {
+      const matchSystem = await prisma.matchSystem.findUnique({
+        where: {
+          id: matchSystemId,
+        },
+      })
+
+      if (!matchSystem) {
+        return NextResponse.json({ error: "Belirtilen maç sistemi bulunamadı" }, { status: 400 })
+      }
+    }
+
+    // Sahanın var olup olmadığını kontrol et (eğer belirtilmişse)
+    if (playgroundId) {
+      const playground = await prisma.playground.findUnique({
+        where: {
+          id: playgroundId,
+        },
+      })
+
+      if (!playground) {
+        return NextResponse.json({ error: "Belirtilen saha bulunamadı" }, { status: 400 })
+      }
+    }
+
+    // Takımların aynı olup olmadığını kontrol et
     if (homeTeamId === awayTeamId) {
-      return NextResponse.json({ error: "Ev sahibi ve deplasman takımları aynı olamaz." }, { status: 400 })
+      return NextResponse.json({ error: "Ev sahibi takım ve deplasman takımı aynı olamaz" }, { status: 400 })
     }
 
-    // Maçı güncelle
     const match = await prisma.match.update({
       where: {
-        id: params.id,
+        id: Number.parseInt(params.id),
       },
       data: {
         stageId,
+        roundId,
         homeTeamId,
         awayTeamId,
+        matchSystemId,
+        playgroundId,
         matchDate: new Date(matchDate),
         location,
         status,
-      },
-      include: {
-        stage: true,
-        homeTeam: true,
-        awayTeam: true,
+        homeScore,
+        awayScore,
       },
     })
 
-    return NextResponse.json({ match, message: "Maç başarıyla güncellendi." })
+    return NextResponse.json(match)
   } catch (error) {
     console.error("Maç güncelleme hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
-    }
-
-    return NextResponse.json({ error: "Maç güncellenirken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json({ error: "Maç güncellenirken bir hata oluştu" }, { status: 500 })
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(request: Request, { params }: { params: { id: string } }) {
   try {
-    // Admin kontrolü
-    await requireAdmin()
-
-    // İlişkili verileri kontrol et
-    const matchScoresCount = await prisma.matchScore.count({
+    // Maça bağlı bireysel maçları kontrol et
+    const individualMatchesCount = await prisma.individualMatch.count({
       where: {
-        matchId: params.id,
+        matchId: Number.parseInt(params.id),
       },
     })
 
-    if (matchScoresCount > 0) {
+    if (individualMatchesCount > 0) {
       return NextResponse.json(
-        { error: "Bu maça bağlı skorlar bulunmaktadır. Önce bunları silmelisiniz." },
+        { error: "Bu maça bağlı bireysel maçlar bulunmaktadır. Önce onları silmelisiniz." },
         { status: 400 },
       )
     }
 
-    // Maçı sil
-    await prisma.match.delete({
+    // Maça bağlı çiftler maçlarını kontrol et
+    const doublesMatchesCount = await prisma.doublesMatch.count({
       where: {
-        id: params.id,
+        matchId: Number.parseInt(params.id),
       },
     })
 
-    return NextResponse.json({ message: "Maç başarıyla silindi." })
-  } catch (error) {
-    console.error("Maç silme hatası:", error)
-
-    if (error instanceof Error && error.message === "Yönetici izni gerekli") {
-      return NextResponse.json({ error: "Bu işlem için yönetici izni gereklidir." }, { status: 403 })
+    if (doublesMatchesCount > 0) {
+      return NextResponse.json(
+        { error: "Bu maça bağlı çiftler maçları bulunmaktadır. Önce onları silmelisiniz." },
+        { status: 400 },
+      )
     }
 
-    return NextResponse.json({ error: "Maç silinirken bir hata oluştu." }, { status: 500 })
+    await prisma.match.delete({
+      where: {
+        id: Number.parseInt(params.id),
+      },
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error("Maç silme hatası:", error)
+    return NextResponse.json({ error: "Maç silinirken bir hata oluştu" }, { status: 500 })
   }
 }
 

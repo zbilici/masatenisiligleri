@@ -1,17 +1,16 @@
+import { prisma } from "@/lib/prisma"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ChevronLeft, Plus } from "lucide-react"
-import prisma from "@/lib/db"
-import { notFound } from "next/navigation"
+import { ChevronLeft } from "lucide-react"
+import { format } from "date-fns"
+import { tr } from "date-fns/locale"
 
 export default async function LeagueDetailsPage({ params }: { params: { id: string } }) {
   // Lig detaylarını getir
   const league = await prisma.league.findUnique({
     where: {
-      id: params.id,
+      id: Number.parseInt(params.id),
     },
     include: {
       season: true,
@@ -31,169 +30,121 @@ export default async function LeagueDetailsPage({ params }: { params: { id: stri
   })
 
   if (!league) {
-    notFound()
+    return (
+      <div className="flex items-center justify-center h-48">
+        <p>Lig bulunamadı.</p>
+      </div>
+    )
+  }
+
+  const formatDate = (dateString: string) => {
+    return format(new Date(dateString), "dd MMMM yyyy", { locale: tr })
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center">
+      <div className="flex items-center gap-2">
         <Link href="/admin/leagues">
-          <Button variant="ghost" size="sm" className="mr-2">
+          <Button variant="outline" size="icon">
             <ChevronLeft className="h-4 w-4" />
           </Button>
         </Link>
         <h1 className="text-3xl font-bold tracking-tight">{league.name}</h1>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Sezon</CardTitle>
+            <CardTitle>Lig Bilgileri</CardTitle>
           </CardHeader>
           <CardContent>
-            <p>{league.season.name}</p>
+            <dl className="space-y-4">
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Sezon</dt>
+                <dd>{league.season.name}</dd>
+              </div>
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Cinsiyet Kategorisi</dt>
+                <dd>{league.gender.name}</dd>
+              </div>
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Lig Tipi</dt>
+                <dd>{league.leagueType.name}</dd>
+              </div>
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Maç Sistemi</dt>
+                <dd>{league.matchSystem?.name || "Belirtilmemiş"}</dd>
+              </div>
+            </dl>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Kategori</CardTitle>
+            <CardTitle>Etaplar</CardTitle>
           </CardHeader>
           <CardContent>
-            <p>{league.gender.name}</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Lig Tipi</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p>{league.leagueType.name}</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Tabs defaultValue="teams">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="teams">Takımlar</TabsTrigger>
-          <TabsTrigger value="stages">Etaplar</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="teams" className="mt-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Takımlar</CardTitle>
-              <Link href={`/admin/leagues/${league.id}/teams/add`}>
-                <Button size="sm">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Takım Ekle
-                </Button>
-              </Link>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Takım Adı</TableHead>
-                    <TableHead>Kulüp</TableHead>
-                    <TableHead className="text-right">İşlemler</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {league.teams.map((team) => (
-                    <TableRow key={team.id}>
-                      <TableCell className="font-medium">{team.name}</TableCell>
-                      <TableCell>{team.club.name}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Link href={`/admin/teams/${team.id}`}>
-                            <Button variant="ghost" size="sm">
-                              Görüntüle
-                            </Button>
-                          </Link>
-                          <Link href={`/admin/leagues/${league.id}/teams/${team.id}/remove`}>
-                            <Button variant="ghost" size="sm">
-                              Kaldır
-                            </Button>
-                          </Link>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-
-                  {league.teams.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={3} className="text-center py-4 text-muted-foreground">
-                        Bu lige henüz takım eklenmemiş.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="stages" className="mt-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Etaplar</CardTitle>
-              <Link href={`/admin/leagues/${league.id}/stages/new`}>
-                <Button size="sm">
-                  <Plus className="h-4 w-4 mr-2" />
+            {league.stages.length === 0 ? (
+              <p className="text-sm text-gray-500">Henüz etap bulunmuyor.</p>
+            ) : (
+              <ul className="space-y-2">
+                {league.stages.map((stage) => (
+                  <li key={stage.id} className="border-b pb-2">
+                    <div className="font-medium">{stage.name}</div>
+                    <div className="text-sm text-gray-500">
+                      {formatDate(stage.startDate.toString())} - {formatDate(stage.endDate.toString())}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-4">
+              <Link href="/admin/stages/new">
+                <Button variant="outline" size="sm">
                   Etap Ekle
                 </Button>
               </Link>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Sıra</TableHead>
-                    <TableHead>Etap Adı</TableHead>
-                    <TableHead>Başlangıç</TableHead>
-                    <TableHead>Bitiş</TableHead>
-                    <TableHead className="text-right">İşlemler</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {league.stages.map((stage) => (
-                    <TableRow key={stage.id}>
-                      <TableCell>{stage.order}</TableCell>
-                      <TableCell className="font-medium">{stage.name}</TableCell>
-                      <TableCell>{new Date(stage.startDate).toLocaleDateString("tr-TR")}</TableCell>
-                      <TableCell>{new Date(stage.endDate).toLocaleDateString("tr-TR")}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Link href={`/admin/stages/${stage.id}`}>
-                            <Button variant="ghost" size="sm">
-                              Görüntüle
-                            </Button>
-                          </Link>
-                          <Link href={`/admin/stages/${stage.id}/edit`}>
-                            <Button variant="ghost" size="sm">
-                              Düzenle
-                            </Button>
-                          </Link>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+            </div>
+          </CardContent>
+        </Card>
 
-                  {league.stages.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
-                        Bu lige henüz etap eklenmemiş.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle>Takımlar</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {league.teams.length === 0 ? (
+              <p className="text-sm text-gray-500">Henüz takım bulunmuyor.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left py-3 px-4">Takım Adı</th>
+                      <th className="text-left py-3 px-4">Kulüp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {league.teams.map((team) => (
+                      <tr key={team.id} className="border-b">
+                        <td className="py-3 px-4">{team.name}</td>
+                        <td className="py-3 px-4">{team.club.name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="mt-4">
+              <Link href="/admin/teams/new">
+                <Button variant="outline" size="sm">
+                  Takım Ekle
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
